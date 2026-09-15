@@ -136,8 +136,8 @@ cầu điều khiển nhà bị giữ custody. Unknown chỉ được tiếp nh�
 phân loại public/business rõ ràng trước khi gửi sang authority.
 
 Bật runtime cần cả `GUS_INTERN_DISPATCH_TOKEN` và
-`GUS_INTERN_DISPATCH_PRINCIPAL`, với khóa do Director cấp cho principal hiện có
-`fleet-dispatch@dru`, `fleet-dispatch@gus` hoặc `fleet-dispatch@lab`. Thay đổi
+`GUS_INTERN_DISPATCH_PRINCIPAL=intern@gus`. Chỉ principal chuyên dụng này được
+chấp nhận; từ chối fleet-dispatch và orchestration. Khóa được cấp riêng; thay đổi
 này không cấp khóa. `GUS_INTERN_DISPATCH_URL` tùy chọn phải khớp chính xác
 `http://100.115.27.81:7370`, cũng là mặc định. Thiếu khóa hoặc cấu hình sai
 không tạo dispatcher mặc định, không gọi mạng authority. Xóa token sau khi
@@ -145,27 +145,47 @@ khởi tạo cũng chặn trước khi gửi. Không lấy khóa provider, khóa
 keychain, proxy hoặc redirect làm dự phòng. `DispatchConfig` cho phép inject
 endpoint/principal/token source; test thay transport riêng, không nới URL.
 
-`POST /dispatch` hiện có dùng Bearer và `X-GUS-Principal`. JSON gồm `task_id`
-và `request_id` bằng OS run ID gốc, `title`, `task` chỉ chứa input đã được duyệt,
-`source=intern`, `classification=PUBLIC|INTERNAL`, `dry_run=false`, và
-`requirements` ràng buộc node/role service cùng giới hạn thực thi. Chỉ một
-request, không retry, fan-out ngang hàng, queue hoặc listener mới. Không gửi
-output/reasoning bridge, lịch sử hoặc bộ nhớ persona. Giữ kiểm tra final-only
-và thời hạn voice grant; không chứng thực inference phía sau hoặc giao việc.
+Service chỉ gửi `POST /messages/post-task` với Bearer và
+`X-GUS-Principal: intern@gus`. Không thay đổi hoặc gọi `/dispatch`. Envelope có
+đúng `request_id` (OS run ID gốc), `role=intern@gus`, `node=gus`,
+`requested_at` (số nguyên Unix giây), `to_role`, `task`. Task có đúng
+`schema_version=gus-bus-task/v1`, `task_id` (cùng run ID), `data_zone=business`,
+`custody_policy=business-only`, `instruction_inert=true`, `body`. Input public
+và business vào queue business-only; zone là biên custody, không suy đoán
+phân loại. Body chỉ có `service_intent`, `destination`, `request_text` gốc và
+`idempotency_key=intern-<SHA256 của OS run ID>`. Toàn bộ JSON tối đa 16 KiB.
+Không gửi output/thinking, lịch sử, bộ nhớ persona, tham số thực thi hoặc khóa.
 
-Chỉ chấp nhận HTTP 200/202 JSON với `ok=true`, `task_id` khớp và
+Admission xác định news/headlines/briefing chỉ đến McAvoy; notification/notify,
+alarm, reminder/remind chỉ đến PAM. Intent hỗn hợp/không rõ, tuyến persona,
+peer/fan-out hoặc đề xuất sai bị từ chối trước khi đọc token hay gọi mạng.
+Authority vẫn sở hữu kiểm tra đích và task; client không cấp quyền thực thi.
+Giữ các kiểm tra custody, final-only và thời hạn voice grant hiện có.
+
+Mỗi lần gọi chỉ thử enqueue một lần, không tự retry hay fallback cloud.
+Map cục bộ có mutex chỉ giữ fingerprint và timestamp cho tối đa 4096 request ID;
+đầy thì từ chối ID mới, không xóa ID cũ. Replay giống hệt giữ nguyên timestamp
+và toàn bộ envelope; đổi text/đích/phân loại với cùng ID bị từ chối. Authority
+sở hữu dedup bền vững, từ chối request cũ, đối soát sau restart và thực thi.
+Dispatcher mới không có replay state bền vững; không dùng để tự retry kết quả
+không rõ.
+
+Chỉ chấp nhận HTTP 200/202 JSON nghiêm ngặt với `ok=true`,
+`contract_version=gus.comms/v1`, `message_id` chuỗi không rỗng có giới hạn,
+`destination` khớp, `task_id` và/hoặc `request_id` khớp (cả hai nếu có), và
 `status=accepted|queued`. Từ chối completion/delivery kể cả `REPORTED_COMPLETE`;
 `delivered` nếu có phải là false. Giới hạn kích thước, từ chối khóa JSON trùng
-và JSON dư. Nội dung authority bị bỏ, không đưa vào kết quả, lỗi hoặc receipt.
+và JSON dư, trường lạ hoặc giá trị lồng nhau. Nội dung authority bị bỏ, không đưa vào kết quả, lỗi hoặc receipt.
 Lỗi không chứa khóa, lỗi token source/transport hoặc response body.
 Kết quả cục bộ có `scope=service_dispatch`, `state=accepted|queued`, receipt
 `dispatch` giữ `run_id`, `bridge_run_id`, `task_id`, đích, status và
 `delivered=false`. Đây là xác nhận cục bộ kết thúc, không phải hoàn tất tác vụ;
 TTL kết quả không đổi. Lỗi authority đánh dấu remote outcome unknown, không
-tự retry. Mã authority đã kiểm tra hiện trả `REPORTED_COMPLETE` khi worker
-báo thành công, nên sẽ bị hợp đồng nghiêm ngặt này từ chối. Cấp khóa, kiểm tra
-response tương thích và triển khai vẫn chờ Director. Xem
-[biên bản dispatch](../../receipts/intern-service-dispatch-2026-09-15.md).
+tự retry. Dotfiles `origin/main` đã kiểm tra có queue và envelope canonical,
+nhưng chưa cấp admission cho `intern@gus` đến hai đích hoặc trả acknowledgement
+đầy đủ. Admission/acknowledgement phía authority, cấp khóa và triển khai là
+điều kiện riêng. Không thực hiện hành động live. Xem
+[biên bản queue handoff](../../receipts/intern-queue-handoff-2026-09-15.md).
 
 Gateway đầy đủ còn bị chặn theo [kiểm toán hợp đồng runtime](intern-runtime-contract_vi.md):
 custody xuyên suốt, ảnh/session/persona/skill và activation/configuration có

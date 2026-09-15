@@ -164,9 +164,9 @@ requests remain held. Unknown classification may reach local reception but
 requires explicit public/business classification before cross-node dispatch.
 
 Runtime opt-in requires both `GUS_INTERN_DISPATCH_TOKEN` and
-`GUS_INTERN_DISPATCH_PRINCIPAL`. The token must be assigned by the Director for
-an authorized existing `fleet-dispatch@dru`, `fleet-dispatch@gus`, or
-`fleet-dispatch@lab` principal. No value is supplied by this change. The optional
+`GUS_INTERN_DISPATCH_PRINCIPAL=intern@gus`. Only this dedicated principal is
+accepted; fleet-dispatch and orchestration principals are rejected. The token
+must be provisioned separately. No value is supplied by this change. The optional
 `GUS_INTERN_DISPATCH_URL` must exactly match `http://100.115.27.81:7370` (also the
 default). Missing credentials create no default dispatcher and no authority
 network effects; invalid startup configuration also disables dispatch. Removing
@@ -175,20 +175,42 @@ to a provider key, another client's token, keychain lookup, proxy, or redirect.
 `DispatchConfig` injects endpoint, principal and token source for tests/embedding;
 tests replace the private HTTP transport, never relax authority URL validation.
 
-The existing `POST /dispatch` carries Bearer authorization and `X-GUS-Principal`.
-Its JSON contains `task_id`, `request_id` (both the original OS run ID), `title`,
-`task` (only the admitted input), `source=intern`, `classification` (`PUBLIC` or
-`INTERNAL`), `dry_run=false`, and `requirements`. Requirements constrain the exact
-node and service role, with bounded execution controls. There is one request,
-no retry, peer fan-out, new queue, or listener. Bridge reasoning/output, persona
-memory and history are never forwarded. Existing final-only bridge validation
-and voice-grant lifetime remain in force; this seam does not attest downstream
-inference behavior or employee delivery.
+The service posts only to canonical `POST /messages/post-task` with Bearer
+authorization and `X-GUS-Principal: intern@gus`. `/dispatch` is unchanged and is
+never called. The common bus request has exactly `request_id` (original OS run
+ID), `role=intern@gus`, `node=gus`, integer Unix-seconds `requested_at`, `to_role`,
+and `task`. The task has exactly `schema_version=gus-bus-task/v1`, `task_id`
+(same run ID), `data_zone=business`, `custody_policy=business-only`,
+`instruction_inert=true`, and `body`. Public and business inputs enter this
+business-only queue; the zone is a custody boundary, not an inferred data class.
+The body has only `service_intent`, `destination`, original `request_text`, and
+`idempotency_key=intern-<SHA256 of OS run ID>`. The complete JSON request is
+limited to 16 KiB. No model output, thinking, history, persona memory, execution
+parameters or credentials enter the payload.
 
-Only HTTP 200/202 JSON with `ok=true`, matching `task_id`, and `status=accepted`
-or `queued` is acknowledged. Completion/delivery statuses, including
+Deterministic intent admission accepts news/headlines/briefing only for McAvoy,
+and notification/notify, alarm, reminder/remind only for PAM. Mixed labels,
+unknown intents, explicit persona/peer/fan-out routes and mismatched proposals
+fail before credential resolution or network I/O. Authority-owned destination
+and task validation remains mandatory; this client does not grant execution.
+Existing custody checks, final-only bridge validation and voice-grant lifetime
+remain in force.
+
+Each call makes one enqueue attempt, with no automatic retry or cloud fallback.
+A process-local, mutex-protected map keeps only fingerprints and timestamps for
+up to 4096 request IDs, refusing new IDs at capacity without eviction. An
+explicit identical replay reuses the timestamp, IDs, and full envelope;
+changed text, destination or classification under the same ID is rejected.
+Durable deduplication, stale-request rejection, restart reconciliation and
+downstream execution belong to the authority. A new dispatcher has no durable
+replay state and must not be used to automatically retry ambiguous requests.
+
+Only HTTP 200/202 strict JSON with `ok=true`, `contract_version=gus.comms/v1`,
+a nonempty bounded scalar `message_id`, matching `destination`, matching
+`task_id` and/or `request_id` (both must match when present), and
+`status=accepted|queued` is acknowledged. Completion/delivery statuses, including
 `REPORTED_COMPLETE`, are rejected; optional `delivered` must be false. Responses
-are size-bounded, duplicate/trailing JSON is rejected, and authority content is
+are size-bounded, unknown fields, nested values and duplicate/trailing JSON are rejected, and authority content is
 discarded. Errors never echo token/source/transport errors or authority bodies.
 No authority output becomes user text. The local result has
 `scope=service_dispatch`, `state=accepted|queued`, and a `dispatch` receipt with
@@ -197,10 +219,11 @@ original `run_id`, `bridge_run_id`, `task_id`, destination, status and
 the usual result TTL applies. Failed authority calls mark remote outcome unknown
 and are never retried automatically.
 
-The inspected authority currently emits `REPORTED_COMPLETE` for successful
-worker execution. That response intentionally fails this stricter contract.
-Director key assignment, acceptance-response compatibility and actual deployment
-remain separate prerequisites. See the [dispatch receipt](../receipts/intern-service-dispatch-2026-09-15.md).
+The inspected dotfiles `origin/main` has the canonical queue and envelope, but
+does not yet admit `intern@gus` to these destinations or return the full strict
+enqueue acknowledgement. Authority admission/acknowledgement compatibility,
+credential provisioning and deployment remain separate prerequisites. No live
+action was taken. See the [queue handoff receipt](../receipts/intern-queue-handoff-2026-09-15.md).
 
 Full gateway integration is blocked by the [runtime contract audit](intern-runtime-contract.md).
 It needs trusted custody propagation, image/session/persona/skill behavior and
